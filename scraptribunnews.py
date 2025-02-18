@@ -46,11 +46,11 @@ def simpan_ke_database(data, daerah):
     try:
         # Konfigurasi koneksi ke database
         conn = psycopg2.connect(
-            dbname="data_scrap_tribun",  # Nama database
-            user="postgres",             # Username PostgreSQL
-            password="12345",            # Password PostgreSQL
-            host="localhost",            # Alamat server database
-            port="7777"                  # Port PostgreSQL 
+            dbname=" ",           # Nama database
+            user=" ",             # Username PostgreSQL
+            password=" ",         # Password PostgreSQL
+            host=" ",             # Alamat server database
+            port=" "              # Port PostgreSQL 
         )
         cursor = conn.cursor()
 
