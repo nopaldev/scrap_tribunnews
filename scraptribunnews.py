@@ -66,9 +66,9 @@ def simpan_ke_database(data, daerah):
         # Konfigurasi koneksi ke database
         conn = psycopg2.connect(
             dbname=" ",  # Nama database
-            user=" ",             # Username PostgreSQL
-            password=" ",            # Password PostgreSQL
-            host=" ",            # Alamat server database
+            user=" ",                 # Username PostgreSQL
+            password=" ",             # Password PostgreSQL
+            host=" ",                 # Alamat server database
             port=" "                  # Port PostgreSQL 
         )
         cursor = conn.cursor()
@@ -216,9 +216,8 @@ def lakukan_scraping(url, daerah_terpilih):
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
 
-from datetime import datetime, timedelta
 
-# Fungsi untuk mengonversi waktu relatif ke format "Hari, 19 Februari 2025"
+# Fungsi untuk mengonversi waktu relatif ke format "Hari, Tanggal Bulan Tahun"
 def konversi_waktu(tanggal_relatif):
     sekarang = datetime.now()
 
@@ -252,7 +251,7 @@ def main():
         lakukan_scraping(url, daerah_terpilih)
         
         print("\n" + "="*50)
-        print("Scraping selesai! Anda dapat memilih daerah lain atau exit.")
+        print(f"Scraping data: {daerah_terpilih} berhasil!!!, Anda dapat memilih daerah lain atau exit.")
         print("="*50)
 
 # Memulai program
