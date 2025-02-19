@@ -4,6 +4,9 @@ import time
 import csv
 import json
 import psycopg2
+from datetime import datetime, timedelta
+import locale
+
 
 # Daftar link Tribun dari berbagai daerah
 tribun_daerah = {
@@ -12,21 +15,30 @@ tribun_daerah = {
     "Tribun Batam": "https://batam.tribunnews.com",
     "Tribun Jambi": "https://jambi.tribunnews.com",
     "Tribun Sumsel": "https://sumsel.tribunnews.com",
-    "Bangka Pos": "https://bangka.tribunnews.com",
+    "Tribun Bangka": "https://bangka.tribunnews.com",
     "Tribun Lampung": "https://lampung.tribunnews.com",
+    "Tribun Aceh" : "https://aceh.tribunnews.com",
     "Tribun Jakarta": "https://jakarta.tribunnews.com",
     "Tribun Jabar": "https://jabar.tribunnews.com",
     "Tribun Jateng": "https://jateng.tribunnews.com",
     "Tribun Jogja": "https://jogja.tribunnews.com",
-    "Surya (Tribun Jatim)": "https://surabaya.tribunnews.com",
+    "Tribun Jatim": "https://surabaya.tribunnews.com",
     "Tribun Pontianak": "https://pontianak.tribunnews.com",
     "Tribun Kaltim": "https://kaltim.tribunnews.com",
-    "Banjarmasin Post": "https://banjarmasin.tribunnews.com",
+    "Tribun Kalteng" : "https://kalteng.tribunnews.com",
+    "Tribun Kalbar" : "https://pontianak.tribunnews.com",
+    "Tribun Kalsel" : "https://banjarmasin.tribunnews.com",
+    "Tribun Banjarmasin ": "https://banjarmasin.tribunnews.com",
+    "Tribun Ambon" : "https://ambon.tribunnews.com",
     "Tribun Timur": "https://makassar.tribunnews.com",
     "Tribun Manado": "https://manado.tribunnews.com",
     "Tribun Bali": "https://bali.tribunnews.com",
-    "Pos Kupang": "https://kupang.tribunnews.com",
+    "Tribun Papua" : "https://papua.tribunnews.com",
+    "Tribun Kupang": "https://kupang.tribunnews.com",
 }
+
+# Atur locale ke Bahasa Indonesia
+locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
 
 # Fungsi untuk membuat tabel jika belum ada
 def buat_tabel_jika_belum_ada(cursor, nama_tabel):
@@ -41,16 +53,23 @@ def buat_tabel_jika_belum_ada(cursor, nama_tabel):
     """
     cursor.execute(query_buat_tabel)
 
+# Fungsi untuk memeriksa apakah berita sudah ada di database
+def berita_sudah_ada(cursor, nama_tabel, judul, link):
+    query_check = f"SELECT EXISTS (SELECT 1 FROM {nama_tabel} WHERE judul = %s OR link = %s);"
+    cursor.execute(query_check, (judul, link))
+    return cursor.fetchone()[0]
+
+
 # Fungsi menyimpan hasil scrap ke database
 def simpan_ke_database(data, daerah):
     try:
         # Konfigurasi koneksi ke database
         conn = psycopg2.connect(
-            dbname=" ",           # Nama database
+            dbname=" ",  # Nama database
             user=" ",             # Username PostgreSQL
-            password=" ",         # Password PostgreSQL
-            host=" ",             # Alamat server database
-            port=" "              # Port PostgreSQL 
+            password=" ",            # Password PostgreSQL
+            host=" ",            # Alamat server database
+            port=" "                  # Port PostgreSQL 
         )
         cursor = conn.cursor()
 
@@ -60,12 +79,15 @@ def simpan_ke_database(data, daerah):
         # Membuat tabel
         buat_tabel_jika_belum_ada(cursor, nama_tabel)
 
-        # Masukkan data ke dalam tabel
+        # Masukkan data ke dalam tabel hanya jika belum ada
         for item in data:
-            cursor.execute(f"""
-                INSERT INTO {nama_tabel} (tema, judul, tanggal, link)
-                VALUES (%s, %s, %s, %s)
-            """, (item["tema"], item["judul"], item["tanggal"], item["link"]))
+            if not berita_sudah_ada(cursor, nama_tabel, item["judul"], item["link"]):
+                cursor.execute(f"""
+                    INSERT INTO {nama_tabel} (tema, judul, tanggal, link)
+                    VALUES (%s, %s, %s, %s)
+                """, (item["tema"], item["judul"], item["tanggal"], item["link"]))
+            else:
+                print(f"Data sudah ada di database, tidak menyimpan ulang: {item['judul']}")
 
         # Commit perubahan dan tutup koneksi
         conn.commit()
@@ -75,6 +97,7 @@ def simpan_ke_database(data, daerah):
         print(f"Berhasil menyimpan {len(data)} berita {daerah} ke database!")
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan ke database: {e}")
+
 
 # Fungsi untuk memilih daerah
 def pilih_daerah():
@@ -146,6 +169,9 @@ def lakukan_scraping(url, daerah_terpilih):
 
             tanggal_element = berita.find_element(By.TAG_NAME, "time")
             tanggal_berita = tanggal_element.text.strip() if tanggal_element else "Tanggal tidak ditemukan"
+            # Konversi waktu relatif ke format tanggal lengkap
+            tanggal_berita = konversi_waktu(tanggal_berita)
+
 
             tema_element = berita.find_element(By.TAG_NAME, "h4")
             tema_berita = tema_element.text.strip() if tema_element else "Tema tidak ditemukan"
@@ -189,6 +215,31 @@ def lakukan_scraping(url, daerah_terpilih):
         print(f"Berhasil menyimpan {len(daftar_berita)} data berita di file {nama_file_json}")
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
+
+from datetime import datetime, timedelta
+
+# Fungsi untuk mengonversi waktu relatif ke format "Hari, 19 Februari 2025"
+def konversi_waktu(tanggal_relatif):
+    sekarang = datetime.now()
+
+    if "menit" in tanggal_relatif:
+        jumlah_menit = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(minutes=jumlah_menit)
+    elif "jam" in tanggal_relatif:
+        jumlah_jam = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(hours=jumlah_jam)
+    elif "hari" in tanggal_relatif:
+        jumlah_hari = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(days=jumlah_hari)
+    else:
+        # Jika format tidak dikenali, anggap itu adalah tanggal lengkap
+        try:
+            waktu = datetime.strptime(tanggal_relatif, "%d %B %Y")
+        except ValueError:
+            return tanggal_relatif  # Jika gagal, kembalikan teks asli
+
+    # Format waktu hanya menampilkan "Hari, DD MMMM YYYY"
+    return waktu.strftime("%A, %d %B %Y")
 
 # Loop utama program
 def main():
