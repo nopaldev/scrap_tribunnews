@@ -9,6 +9,7 @@ import psycopg2
 from datetime import datetime, timedelta
 import locale
 
+
 # Daftar link Tribun dari berbagai daerah
 tribun_daerah = {
     "Tribun Medan": "https://medan.tribunnews.com",
@@ -41,6 +42,13 @@ tribun_daerah = {
 # Atur locale ke Bahasa Indonesia
 locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
 
+# Def pengganti query tanggal dari text ke date
+def parse_date(tanggal_berita):
+    try:
+        return datetime.strptime(tanggal_berita, "%d %B %Y").date()  # Format dari The Hacker News
+    except ValueError:
+        return None
+
 # Loop utama program
 def main():
     while True:
@@ -63,7 +71,7 @@ def buat_tabel_jika_belum_ada(cursor, nama_tabel):
         id SERIAL PRIMARY KEY,
         tema TEXT,
         judul TEXT,
-        tanggal TEXT,
+        tanggal DATE,
         link TEXT,
         isi_berita TEXT
     );
@@ -272,7 +280,6 @@ def scroll(driver):
         last_height = new_height
 
 
-# Fungsi untuk mengonversi waktu relatif ke format "Hari, Tanggal Bulan Tahun"
 def konversi_waktu(tanggal_relatif):
     sekarang = datetime.now()
 
@@ -288,12 +295,13 @@ def konversi_waktu(tanggal_relatif):
     else:
         # Jika format tidak dikenali, anggap itu adalah tanggal lengkap
         try:
-            waktu = datetime.strptime(tanggal_relatif, "%d %B %Y")
+            waktu = datetime.strptime(tanggal_relatif, "%A, %d %B %Y")  # Ubah dari string tanggal
         except ValueError:
-            return tanggal_relatif  # Jika gagal, kembalikan teks asli
+            return None  # Jika gagal, kembalikan None untuk di-handle nanti
 
-    # Format waktu hanya menampilkan "Hari, DD MMMM YYYY"
-    return waktu.strftime("%A, %d %B %Y")
+    # Kembalikan dalam format YYYY-MM-DD yang sesuai untuk PostgreSQL
+    return waktu.strftime("%Y-%m-%d")
+
 
 # Memulai program
 if __name__ == "__main__":
