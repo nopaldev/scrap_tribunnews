@@ -1,12 +1,13 @@
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 import csv
 import json
 import psycopg2
 from datetime import datetime, timedelta
 import locale
-
 
 # Daftar link Tribun dari berbagai daerah
 tribun_daerah = {
@@ -40,7 +41,22 @@ tribun_daerah = {
 # Atur locale ke Bahasa Indonesia
 locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
 
-# Fungsi untuk membuat tabel jika belum ada
+# Loop utama program
+def main():
+    while True:
+        url, daerah_terpilih = pilih_daerah()
+        
+        if url is None:  # Jika user memilih exit
+            break
+        
+        lakukan_scraping(url, daerah_terpilih)
+        
+        print("\n" + "="*50)
+        print(f"Scraping data: {daerah_terpilih} berhasil!!!, Anda dapat memilih daerah lain atau exit.")
+        print("="*50)
+
+
+# Modify the table creation function to include the article content
 def buat_tabel_jika_belum_ada(cursor, nama_tabel):
     query_buat_tabel = f"""
     CREATE TABLE IF NOT EXISTS {nama_tabel} (
@@ -48,48 +64,42 @@ def buat_tabel_jika_belum_ada(cursor, nama_tabel):
         tema TEXT,
         judul TEXT,
         tanggal TEXT,
-        link TEXT
+        link TEXT,
+        isi_berita TEXT
     );
     """
     cursor.execute(query_buat_tabel)
 
-# Fungsi untuk memeriksa apakah berita sudah ada di database
+# Modify the duplicate check function
 def berita_sudah_ada(cursor, nama_tabel, judul, link):
     query_check = f"SELECT EXISTS (SELECT 1 FROM {nama_tabel} WHERE judul = %s OR link = %s);"
     cursor.execute(query_check, (judul, link))
     return cursor.fetchone()[0]
 
-
-# Fungsi menyimpan hasil scrap ke database
+# Modify the database saving function to include article content
 def simpan_ke_database(data, daerah):
     try:
-        # Konfigurasi koneksi ke database
         conn = psycopg2.connect(
-            dbname=" ",  # Nama database
-            user=" ",                 # Username PostgreSQL
-            password=" ",             # Password PostgreSQL
-            host=" ",                 # Alamat server database
-            port=" "                  # Port PostgreSQL 
+            dbname=" ",
+            user=" ",
+            password=" ",
+            host=" ",
+            port=" "
         )
         cursor = conn.cursor()
 
-        # Nama tabel berdasarkan daerah
         nama_tabel = f"berita_tribun_{daerah.replace(' ', '_').lower()}"
-
-        # Membuat tabel
         buat_tabel_jika_belum_ada(cursor, nama_tabel)
 
-        # Masukkan data ke dalam tabel hanya jika belum ada
         for item in data:
             if not berita_sudah_ada(cursor, nama_tabel, item["judul"], item["link"]):
                 cursor.execute(f"""
-                    INSERT INTO {nama_tabel} (tema, judul, tanggal, link)
-                    VALUES (%s, %s, %s, %s)
-                """, (item["tema"], item["judul"], item["tanggal"], item["link"]))
+                    INSERT INTO {nama_tabel} (tema, judul, tanggal, link, isi_berita)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (item["tema"], item["judul"], item["tanggal"], item["link"], item["isi_berita"]))
             else:
                 print(f"Data sudah ada di database, tidak menyimpan ulang: {item['judul']}")
 
-        # Commit perubahan dan tutup koneksi
         conn.commit()
         cursor.close()
         conn.close()
@@ -98,7 +108,126 @@ def simpan_ke_database(data, daerah):
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan ke database: {e}")
 
+def ambil_isi_berita(driver, link):
+    try:
+        # Store current window handle
+        main_window = driver.current_window_handle
+        
+        # Open link in new tab
+        driver.execute_script(f'window.open("{link}", "_blank");')
+        
+        # Switch to the new tab
+        driver.switch_to.window(driver.window_handles[-1])
+        
+        # Add a small delay to ensure page loads completely
+        time.sleep(2)
+        
+        # Find the script tag containing keywordBrandSafety
+        wait = WebDriverWait(driver, 10)
+        script_element = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//script[contains(text(), 'keywordBrandSafety')]"
+        )))
+        
+        # Get the script content
+        script_content = script_element.get_attribute('innerHTML')
+        
+        # Extract the content from keywordBrandSafety variable
+        if 'keywordBrandSafety' in script_content:
+            # Find the content between the quotes after keywordBrandSafety =
+            start_index = script_content.find('keywordBrandSafety = "') + len('keywordBrandSafety = "')
+            end_index = script_content.find('";', start_index)
+            
+            if start_index > -1 and end_index > -1:
+                isi_berita = script_content[start_index:end_index]
+                
+                # Clean up the content
+                isi_berita = isi_berita.strip()
+                # Remove extra whitespace
+                isi_berita = ' '.join(isi_berita.split())
+        else:
+            isi_berita = "Isi berita tidak ditemukan dalam script"
+        
+        # Close the tab and switch back to main window
+        driver.close()
+        driver.switch_to.window(main_window)
+        
+        return isi_berita
+        
+    except Exception as e:
+        print(f"Error mengambil isi berita: {e}")
+        # Make sure to switch back to main window even if there's an error
+        if len(driver.window_handles) > 1:
+            driver.close()
+        driver.switch_to.window(main_window)
+        return "Gagal mengambil isi berita"
+    
+# Modify the main scraping function
+def lakukan_scraping(url, daerah_terpilih):
+    driver = webdriver.Chrome()
+    driver.get(url)
+    time.sleep(3)
+    scroll(driver)
 
+    daftar_berita = []
+    elemen_berita = driver.find_elements(By.CLASS_NAME, "mr140")
+
+    for berita in elemen_berita:
+        try:
+            judul_element = berita.find_element(By.TAG_NAME, "h3")
+            judul_berita = judul_element.text.strip()
+
+            tanggal_element = berita.find_element(By.TAG_NAME, "time")
+            tanggal_berita = tanggal_element.text.strip() if tanggal_element else "Tanggal tidak ditemukan"
+            tanggal_berita = konversi_waktu(tanggal_berita)
+
+            tema_element = berita.find_element(By.TAG_NAME, "h4")
+            tema_berita = tema_element.text.strip() if tema_element else "Tema tidak ditemukan"
+
+            link_element = berita.find_element(By.TAG_NAME, "h3").find_element(By.TAG_NAME, "a")
+            link_berita = link_element.get_attribute("href") if link_element else "Link tidak ditemukan"
+            
+            # Get article content
+            print(f"Mengambil isi berita: {judul_berita}")
+            isi_berita = ambil_isi_berita(driver, link_berita)
+
+            daftar_berita.append({
+                "tema": tema_berita,
+                "judul": judul_berita,
+                "tanggal": tanggal_berita,
+                "link": link_berita,
+                "isi_berita": isi_berita
+            })
+
+            print(f"Sukses mengambil data berita: {judul_berita}")
+        except Exception as e:
+            print(f"Terjadi kesalahan saat mengambil data berita: {e}")
+
+    driver.quit()
+
+    # Save to database
+    simpan_ke_database(daftar_berita, daerah_terpilih)
+
+    # Save to CSV
+    nama_file_csv = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.csv"
+    try:
+        with open(nama_file_csv, mode='w', newline='', encoding='utf-8') as file_csv:
+            penulis_csv = csv.DictWriter(file_csv, fieldnames=["tema", "judul", "tanggal", "link", "isi_berita"])
+            penulis_csv.writeheader()
+            penulis_csv.writerows(daftar_berita)
+        print(f"Berhasil menyimpan {len(daftar_berita)} data berita ke file {nama_file_csv}")
+    except Exception as e:
+        print(f"Terjadi kesalahan saat menyimpan: {e}")
+
+    # Save to JSON
+    nama_file_json = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.json"
+    try:
+        with open(nama_file_json, mode='w', encoding='utf-8') as file_json:
+            json.dump(daftar_berita, file_json, ensure_ascii=False, indent=4)
+        print(f"Berhasil menyimpan {len(daftar_berita)} data berita di file {nama_file_json}")
+    except Exception as e:
+        print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
+
+# [Previous pilih_daerah, scroll, konversi_waktu, and main functions remain unchanged]
 # Fungsi untuk memilih daerah
 def pilih_daerah():
     print("\nPilih daerah yang ingin di-scrap:")
@@ -127,6 +256,7 @@ def pilih_daerah():
         print("Input tidak valid! Masukkan angka.")
         return pilih_daerah()
 
+
 # Fungsi scroll sampai bawah
 def scroll(driver):
     last_height = driver.execute_script("return document.body.scrollHeight")
@@ -140,81 +270,6 @@ def scroll(driver):
         if new_height == last_height:
             break
         last_height = new_height
-
-# Fungsi utama untuk melakukan scraping
-def lakukan_scraping(url, daerah_terpilih):
-    # Inisialisasi driver Selenium
-    driver = webdriver.Chrome()
-
-    # Membuka website
-    driver.get(url)
-
-    # Delay waktu untuk scroll
-    time.sleep(3)
-
-    # Memulai proses scroll
-    scroll(driver)
-
-    # Variabel untuk menyimpan data hasil scrap
-    daftar_berita = []
-
-    # Mengambil semua elemen berita
-    elemen_berita = driver.find_elements(By.CLASS_NAME, "mr140")
-
-    # Loop mengambil data dari setiap berita
-    for berita in elemen_berita:
-        try:
-            judul_element = berita.find_element(By.TAG_NAME, "h3")
-            judul_berita = judul_element.text.strip()
-
-            tanggal_element = berita.find_element(By.TAG_NAME, "time")
-            tanggal_berita = tanggal_element.text.strip() if tanggal_element else "Tanggal tidak ditemukan"
-            # Konversi waktu relatif ke format tanggal lengkap
-            tanggal_berita = konversi_waktu(tanggal_berita)
-
-
-            tema_element = berita.find_element(By.TAG_NAME, "h4")
-            tema_berita = tema_element.text.strip() if tema_element else "Tema tidak ditemukan"
-
-            link_element = berita.find_element(By.TAG_NAME, "h3").find_element(By.TAG_NAME, "a")
-            link_berita = link_element.get_attribute("href") if link_element else "Link tidak ditemukan"
-
-            daftar_berita.append({
-                "tema": tema_berita,
-                "judul": judul_berita,
-                "tanggal": tanggal_berita,
-                "link": link_berita
-            })
-
-            print(f"Sukses mengambil data berita: {judul_berita}")
-        except Exception as e:
-            print(f"Terjadi kesalahan saat mengambil data berita: {e}")
-
-    # Menutup browser
-    driver.quit()
-
-    # Menyimpan data hasil scrap ke database
-    simpan_ke_database(daftar_berita, daerah_terpilih)
-
-    # Menyimpan data hasil scrap ke file CSV
-    nama_file_csv = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.csv"
-    try:
-        with open(nama_file_csv, mode='w', newline='', encoding='utf-8') as file_csv:
-            penulis_csv = csv.DictWriter(file_csv, fieldnames=["tema", "judul", "tanggal", "link"])
-            penulis_csv.writeheader()
-            penulis_csv.writerows(daftar_berita)
-        print(f"Berhasil menyimpan {len(daftar_berita)} data berita ke file {nama_file_csv}")
-    except Exception as e:
-        print(f"Terjadi kesalahan saat menyimpan: {e}")
-
-    # Menyimpan data hasil scrap ke file JSON
-    nama_file_json = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.json"
-    try:
-        with open(nama_file_json, mode='w', encoding='utf-8') as file_json:
-            json.dump(daftar_berita, file_json, ensure_ascii=False, indent=4)
-        print(f"Berhasil menyimpan {len(daftar_berita)} data berita di file {nama_file_json}")
-    except Exception as e:
-        print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
 
 
 # Fungsi untuk mengonversi waktu relatif ke format "Hari, Tanggal Bulan Tahun"
@@ -239,20 +294,6 @@ def konversi_waktu(tanggal_relatif):
 
     # Format waktu hanya menampilkan "Hari, DD MMMM YYYY"
     return waktu.strftime("%A, %d %B %Y")
-
-# Loop utama program
-def main():
-    while True:
-        url, daerah_terpilih = pilih_daerah()
-        
-        if url is None:  # Jika user memilih exit
-            break
-        
-        lakukan_scraping(url, daerah_terpilih)
-        
-        print("\n" + "="*50)
-        print(f"Scraping data: {daerah_terpilih} berhasil!!!, Anda dapat memilih daerah lain atau exit.")
-        print("="*50)
 
 # Memulai program
 if __name__ == "__main__":
