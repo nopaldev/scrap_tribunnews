@@ -1,3 +1,7 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import textwrap
+import threading
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,8 +12,10 @@ import json
 import psycopg2
 from datetime import datetime, timedelta
 import locale
+import webbrowser
 
-# Daftar link Tribun dari berbagai daerah
+locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
+
 tribun_daerah = {
     "Tribun Medan": "https://medan.tribunnews.com",
     "Tribun Pekanbaru": "https://pekanbaru.tribunnews.com",
@@ -18,7 +24,7 @@ tribun_daerah = {
     "Tribun Sumsel": "https://sumsel.tribunnews.com",
     "Tribun Bangka": "https://bangka.tribunnews.com",
     "Tribun Lampung": "https://lampung.tribunnews.com",
-    "Tribun Aceh" : "https://aceh.tribunnews.com",
+    "Tribun Aceh": "https://aceh.tribunnews.com",
     "Tribun Jakarta": "https://jakarta.tribunnews.com",
     "Tribun Jabar": "https://jabar.tribunnews.com",
     "Tribun Jateng": "https://jateng.tribunnews.com",
@@ -26,44 +32,52 @@ tribun_daerah = {
     "Tribun Jatim": "https://surabaya.tribunnews.com",
     "Tribun Pontianak": "https://pontianak.tribunnews.com",
     "Tribun Kaltim": "https://kaltim.tribunnews.com",
-    "Tribun Kalteng" : "https://kalteng.tribunnews.com",
-    "Tribun Kalbar" : "https://pontianak.tribunnews.com",
-    "Tribun Kalsel" : "https://banjarmasin.tribunnews.com",
-    "Tribun Banjarmasin ": "https://banjarmasin.tribunnews.com",
-    "Tribun Ambon" : "https://ambon.tribunnews.com",
+    "Tribun Kalteng": "https://kalteng.tribunnews.com",
+    "Tribun Kalbar": "https://pontianak.tribunnews.com",
+    "Tribun Kalsel": "https://banjarmasin.tribunnews.com",
+    "Tribun Banjarmasin": "https://banjarmasin.tribunnews.com",
+    "Tribun Ambon": "https://ambon.tribunnews.com",
     "Tribun Timur": "https://makassar.tribunnews.com",
     "Tribun Manado": "https://manado.tribunnews.com",
     "Tribun Bali": "https://bali.tribunnews.com",
-    "Tribun Papua" : "https://papua.tribunnews.com",
+    "Tribun Papua": "https://papua.tribunnews.com",
     "Tribun Kupang": "https://kupang.tribunnews.com",
 }
 
-# Atur locale ke Bahasa Indonesia
-locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
-
-# Def pengganti query tanggal dari text ke date
 def parse_date(tanggal_berita):
     try:
-        return datetime.strptime(tanggal_berita, "%d %B %Y").date()  
+        return datetime.strptime(tanggal_berita, "%d %B %Y").date()
     except ValueError:
         return None
 
-# Loop utama program
-def main():
+def scroll(driver):
+    last_height = driver.execute_script("return document.body.scrollHeight")
     while True:
-        url, daerah_terpilih = pilih_daerah()
-        
-        if url is None:  # Jika user memilih 0 exit
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
             break
-        
-        lakukan_scraping(url, daerah_terpilih)
-        
-        print("\n" + "="*50)
-        print(f"Scraping data: {daerah_terpilih} berhasil!!!, Anda dapat memilih daerah lain atau exit.")
-        print("="*50)
+        last_height = new_height
 
+def konversi_waktu(tanggal_relatif):
+    sekarang = datetime.now()
+    if "menit" in tanggal_relatif:
+        jumlah_menit = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(minutes=jumlah_menit)
+    elif "jam" in tanggal_relatif:
+        jumlah_jam = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(hours=jumlah_jam)
+    elif "hari" in tanggal_relatif:
+        jumlah_hari = int(tanggal_relatif.split(" ")[0])
+        waktu = sekarang - timedelta(days=jumlah_hari)
+    else:
+        try:
+            waktu = datetime.strptime(tanggal_relatif, "%A, %d %B %Y")
+        except ValueError:
+            return None
+    return waktu.strftime("%A, %Y-%m-%d")
 
-# Modify the table creation function to include the article content
 def buat_tabel_jika_belum_ada(cursor, nama_tabel):
     query_buat_tabel = f"""
     CREATE TABLE IF NOT EXISTS {nama_tabel} (
@@ -77,25 +91,21 @@ def buat_tabel_jika_belum_ada(cursor, nama_tabel):
     """
     cursor.execute(query_buat_tabel)
 
-# Fungsi untuk mengecek apakah sudah ada data yang sama
 def berita_sudah_ada(cursor, nama_tabel, judul, link):
     query_check = f"SELECT EXISTS (SELECT 1 FROM {nama_tabel} WHERE judul = %s OR link = %s);"
     cursor.execute(query_check, (judul, link))
     return cursor.fetchone()[0]
 
-# Fungsi koneksi ke database
 def simpan_ke_database(data, daerah):
     try:
         conn = psycopg2.connect(
-            dbname=" ",
-            user=" ",
-            password=" ",
-            host=" ",
-            port=" "
+            dbname=" ",        # ganti dengan nama database
+            user=" ",          # ganti dengan nama user database
+            password=" ",      # ganti dengan password database
+            host=" ",          # ganti dengan nama host database
+            port=" "           # ganti dengan port yang di gunakan pada database
         )
         cursor = conn.cursor()
-
-        # Fungsi agar tidak menyimpan data yang sudah ada / terjadinya duplikasi
         nama_tabel = f"berita_tribun_{daerah.replace(' ', '_').lower()}"
         buat_tabel_jika_belum_ada(cursor, nama_tabel)
 
@@ -105,71 +115,40 @@ def simpan_ke_database(data, daerah):
                     INSERT INTO {nama_tabel} (tema, judul, tanggal, link, isi_berita)
                     VALUES (%s, %s, %s, %s, %s)
                 """, (item["tema"], item["judul"], item["tanggal"], item["link"], item["isi_berita"]))
-            else:
-                print(f"Data sudah ada di database, tidak menyimpan ulang: {item['judul']}")
-
         conn.commit()
         cursor.close()
         conn.close()
-
         print(f"Berhasil menyimpan {len(data)} berita {daerah} ke database!")
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan ke database: {e}")
 
-# Fungsi untuk ambil isi dari tiap berita
 def ambil_isi_berita(driver, link):
     try:
-        # Menyimpan handle (ID unik) dari jendela utama browser
         main_window = driver.current_window_handle
-        
-        # Fungsi membuka tab link dari tiap url berita
         driver.execute_script(f'window.open("{link}", "_blank");')
-        
-        # Funtuk berpindah ke tab baru setelah Selenium membuka link dalam tab terpisah.
         driver.switch_to.window(driver.window_handles[-1])
-        
-        # Penambahan delay agar laman termuat seutuhnya
         time.sleep(3)
         
-        # Fungsi untuk menunggu hingga elemen <script> yang mengandung teks "keywordBrandSafety" muncul di halaman web sebelum melanjutkan eksekusi.
         wait = WebDriverWait(driver, 10)
         script_element = wait.until(EC.presence_of_element_located((
             By.XPATH, "//script[contains(text(), 'keywordBrandSafety')]"
         )))
         
-        # Fungsi untuk mengambil teks yang ada di dalam elemen <script> yang sebelumnya ditemukan.
         script_content = script_element.get_attribute('innerHTML')
+        start_index = script_content.find('keywordBrandSafety = "') + len('keywordBrandSafety = "')
+        end_index = script_content.find('";', start_index)
         
-        # Fungsi untuk mengekstrak teks yang ada di dalam variabel keywordBrandSafety di dalam elemen <script>.
-        if 'keywordBrandSafety' in script_content:
-            # Fungsi untuk mencari content diantara quotes setelah keywordBrandSafety
-            start_index = script_content.find('keywordBrandSafety = "') + len('keywordBrandSafety = "')
-            end_index = script_content.find('";', start_index)
-            
-            if start_index > -1 and end_index > -1:
-                isi_berita = script_content[start_index:end_index]
-                
-                # Membersihkan content
-                isi_berita = isi_berita.strip()
-                # Menghapus tambahan spasi
-                isi_berita = ' '.join(isi_berita.split())
-        else:
-            isi_berita = "Isi berita tidak ditemukan dalam script"
-        
-        # Menutup tab dan kembali ke halaman utama
+        isi_berita = script_content[start_index:end_index].strip() if start_index > -1 and end_index > -1 else "Isi berita tidak ditemukan"
         driver.close()
         driver.switch_to.window(main_window)
-        
-        return isi_berita
-        
+        return ' '.join(isi_berita.split())
     except Exception as e:
         print(f"Error mengambil isi berita: {e}")
         if len(driver.window_handles) > 1:
             driver.close()
         driver.switch_to.window(main_window)
         return "Gagal mengambil isi berita"
-    
-# Fungsi untuk scraping
+
 def lakukan_scraping(url, daerah_terpilih):
     driver = webdriver.Chrome()
     driver.get(url)
@@ -185,19 +164,14 @@ def lakukan_scraping(url, daerah_terpilih):
             judul_berita = judul_element.text.strip()
 
             tanggal_element = berita.find_element(By.TAG_NAME, "time")
-            tanggal_berita = tanggal_element.text.strip() if tanggal_element else "Tanggal tidak ditemukan"
-            tanggal_berita = konversi_waktu(tanggal_berita)
+            tanggal_berita = konversi_waktu(tanggal_element.text.strip() if tanggal_element else "Tanggal tidak ditemukan")
 
             tema_element = berita.find_element(By.TAG_NAME, "h4")
             tema_berita = tema_element.text.strip() if tema_element else "Tema tidak ditemukan"
 
-            link_element = berita.find_element(By.TAG_NAME, "h3").find_element(By.TAG_NAME, "a")
-            link_berita = link_element.get_attribute("href") if link_element else "Link tidak ditemukan"
-            
-            # Mengambil isi berita, diambil dari fungsi diatas
-            print(f"Mengambil isi berita: {judul_berita}")
+            link_berita = judul_element.find_element(By.TAG_NAME, "a").get_attribute("href")
             isi_berita = ambil_isi_berita(driver, link_berita)
-            # Memasukan hasil scrap
+            
             daftar_berita.append({
                 "tema": tema_berita,
                 "judul": judul_berita,
@@ -211,96 +185,228 @@ def lakukan_scraping(url, daerah_terpilih):
             print(f"Terjadi kesalahan saat mengambil data berita: {e}")
 
     driver.quit()
-
-    # Simpan ke database
     simpan_ke_database(daftar_berita, daerah_terpilih)
 
-    # Simpan sebagai csv
     nama_file_csv = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.csv"
+    with open(nama_file_csv, mode='w', newline='', encoding='utf-8') as file_csv:
+        penulis_csv = csv.DictWriter(file_csv, fieldnames=["tema", "judul", "tanggal", "link", "isi_berita"])
+        penulis_csv.writeheader()
+        penulis_csv.writerows(daftar_berita)
+
+    nama_file_json = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.json"
+    with open(nama_file_json, mode='w', encoding='utf-8') as file_json:
+        json.dump(daftar_berita, file_json, ensure_ascii=False, indent=4)
+
+def start_scraping():
+    daerah = daerah_var.get()
+    if not daerah:
+        messagebox.showerror("Error", "Pilih daerah terlebih dahulu!")
+        return
+    url = tribun_daerah[daerah]
+    threading.Thread(target=lakukan_scraping, args=(url, daerah), daemon=True).start()
+    messagebox.showinfo("Info", f"Memulai scraping untuk {daerah}...")
+
+def load_data_from_db():
+    daerah = daerah_var.get()
+    if not daerah:
+        messagebox.showerror("Error", "Pilih daerah terlebih dahulu!")
+        return
+    try:
+        conn = psycopg2.connect(
+            dbname=" ",        # ganti dengan nama database
+            user=" ",          # ganti dengan nama user database
+            password=" ",      # ganti dengan password database
+            host=" ",          # ganti dengan nama host database
+            port=" "           # ganti dengan port yang di gunakan pada database
+        )
+        cursor = conn.cursor()
+        nama_tabel = f"berita_tribun_{daerah.replace(' ', '_').lower()}"
+        cursor.execute(f"SELECT id, tema, judul, tanggal, link, isi_berita FROM {nama_tabel}")
+        data = cursor.fetchall()
+        
+        for item in tree_top.get_children():
+            tree_top.delete(item)
+        for item in tree_bottom.get_children():
+            tree_bottom.delete(item)
+        
+        global all_data
+        all_data = data
+        
+        for row in data:
+            id_berita, tema, judul, tanggal, link, _ = row
+            tanggal_str = tanggal.strftime("%A, %Y-%m-%d")
+            tree_top.insert("", "end", values=(id_berita, tema, judul, tanggal_str, link))
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        messagebox.showerror("Error", f"Terjadi kesalahan: {e}")
+
+def show_article_content(event):
+    item = tree_top.selection()
+    if not item:
+        return
+    values = tree_top.item(item[0], "values")
+    judul = values[2]
+    for row in all_data:
+        if row[2] == judul:
+            _, _, _, _, _, isi_berita = row
+            for item in tree_bottom.get_children():
+                tree_bottom.delete(item)
+            wrapped_isi = textwrap.wrap(isi_berita, width=230)
+            for line in wrapped_isi:
+                tree_bottom.insert("", "end", values=(line,))
+            break
+
+def open_link(event):
+    item = tree_top.identify_row(event.y)
+    if item:
+        values = tree_top.item(item, "values")
+        link = values[4]
+        if link and link != "Link tidak ditemukan":
+            webbrowser.open(link)
+
+def export_to_csv():
+    daerah = daerah_var.get()
+    if not daerah:
+        messagebox.showerror("Error", "Pilih daerah terlebih dahulu!")
+        return
+    nama_file_csv = f"result_scrap_{daerah.replace(' ', '_').lower()}.csv"
     try:
         with open(nama_file_csv, mode='w', newline='', encoding='utf-8') as file_csv:
-            penulis_csv = csv.DictWriter(file_csv, fieldnames=["tema", "judul", "tanggal", "link", "isi_berita"])
-            penulis_csv.writeheader()
-            penulis_csv.writerows(daftar_berita)
-        print(f"Berhasil menyimpan {len(daftar_berita)} data berita ke file {nama_file_csv}")
+            writer = csv.writer(file_csv)
+            writer.writerow(["ID", "Tema", "Judul", "Tanggal", "Link", "Isi Berita"])
+            for row in all_data:
+                id_berita, tema, judul, tanggal, link, isi_berita = row
+                tanggal_str = tanggal.strftime("%A, %Y-%m-%d")
+                writer.writerow([id_berita, tema, judul, tanggal_str, link, isi_berita])
+        messagebox.showinfo("Info", f"Data diekspor ke {nama_file_csv}")
     except Exception as e:
-        print(f"Terjadi kesalahan saat menyimpan: {e}")
+        messagebox.showerror("Error", f"Gagal mengekspor ke CSV: {e}")
 
-    # Simpan ke Json
-    nama_file_json = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.json"
+def export_to_json():
+    daerah = daerah_var.get()
+    if not daerah:
+        messagebox.showerror("Error", "Pilih daerah terlebih dahulu!")
+        return
+    nama_file_json = f"result_scrap_{daerah.replace(' ', '_').lower()}.json"
     try:
         with open(nama_file_json, mode='w', encoding='utf-8') as file_json:
-            json.dump(daftar_berita, file_json, ensure_ascii=False, indent=4)
-        print(f"Berhasil menyimpan {len(daftar_berita)} data berita di file {nama_file_json}")
+            formatted_data = [
+                {
+                    "id": row[0],
+                    "tema": row[1],
+                    "judul": row[2],
+                    "tanggal": row[3].strftime("%A, %Y-%m-%d"),
+                    "link": row[4],
+                    "isi_berita": row[5]
+                } for row in all_data
+            ]
+            json.dump(formatted_data, file_json, ensure_ascii=False, indent=4)
+        messagebox.showinfo("Info", f"Data diekspor ke {nama_file_json}")
     except Exception as e:
-        print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
+        messagebox.showerror("Error", f"Gagal mengekspor ke JSON: {e}")
 
-# Fungsi untuk memilih daerah
-def pilih_daerah():
-    print("\nPilih daerah yang ingin di-scrap:")
-    for index, daerah in enumerate(tribun_daerah.keys(), start=1):
-        print(f"{index}. {daerah}")
-    print("0. Exit program")
-    
-    try:
-        pilihan = int(input("Masukkan nomor daerah yang dipilih: "))
-        
-        if pilihan == 0:
-            print("Program selesai. Terima kasih!")
-            return None, None
-        
-        if pilihan < 1 or pilihan > len(tribun_daerah):
-            print("Pilihan tidak valid! Silakan coba lagi.")
-            return pilih_daerah()
-        
-        # Mengambil link berdasarkan pilihan
-        daerah_terpilih = list(tribun_daerah.keys())[pilihan - 1]
-        url = tribun_daerah[daerah_terpilih]
-        
-        print(f"Anda memilih: {daerah_terpilih} - {url}")
-        return url, daerah_terpilih
-    except ValueError:
-        print("Input tidak valid! Masukkan angka.")
-        return pilih_daerah()
+def copy_selected(event=None):
+    widget = root.focus_get()
+    if widget == tree_top:
+        selected = tree_top.selection()
+        if selected:
+            values = tree_top.item(selected[0], "values")
+            root.clipboard_clear()
+            root.clipboard_append(" | ".join(values))
+            root.update()
+    elif widget == tree_bottom:
+        selected = tree_bottom.selection()
+        if selected:
+            value = tree_bottom.item(selected[0], "values")[0]
+            root.clipboard_clear()
+            root.clipboard_append(value)
+            root.update()
 
+def show_context_menu(event, tree):
+    selected = tree.selection()
+    if not selected:
+        return
+    context_menu = tk.Menu(root, tearoff=0)
+    context_menu.add_command(label="Copy", command=copy_selected)
+    context_menu.post(event.x_root, event.y_root)
 
-# Fungsi scroll sampai bawah
-def scroll(driver):
-    last_height = driver.execute_script("return document.body.scrollHeight")
+# GUI Setup
+root = tk.Tk()
+root.title("Tribun News Scraper")
+root.geometry("1200x800")
+root.configure(bg="#FFFFFF")
 
-    while True:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(3)
+style = ttk.Style()
+style.theme_use('clam')
+style.configure("TLabel", font=("Segoe UI", 12, "bold"), background="#FFFFFF")
+style.configure("TButton", font=("Segoe UI", 10), padding=6)
+style.map("TButton", 
+          background=[('active', '#1976D2'), ('!active', '#2196F3')],
+          foreground=[('active', 'white'), ('!active', 'white')])
+style.configure("Treeview", font=("Segoe UI", 10), rowheight=25)
+style.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"), background="#BBDEFB")
+style.configure("TCombobox", font=("Segoe UI", 10))
 
-        new_height = driver.execute_script("return document.body.scrollHeight")
+main_frame = tk.Frame(root, bg="#FFFFFF", padx=20, pady=20)
+main_frame.pack(fill="both", expand=True)
 
-        if new_height == last_height:
-            break
-        last_height = new_height
+ttk.Label(main_frame, text="Tribun News Scraper", font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(0, 10), padx=10)
 
-# Fungsi konversi waktu
-def konversi_waktu(tanggal_relatif):
-    sekarang = datetime.now()
+control_frame = tk.Frame(main_frame, bg="#FFFFFF")
+control_frame.pack(fill="x", pady=10, padx=10)
 
-    if "menit" in tanggal_relatif:
-        jumlah_menit = int(tanggal_relatif.split(" ")[0])
-        waktu = sekarang - timedelta(minutes=jumlah_menit)
-    elif "jam" in tanggal_relatif:
-        jumlah_jam = int(tanggal_relatif.split(" ")[0])
-        waktu = sekarang - timedelta(hours=jumlah_jam)
-    elif "hari" in tanggal_relatif:
-        jumlah_hari = int(tanggal_relatif.split(" ")[0])
-        waktu = sekarang - timedelta(days=jumlah_hari)
-    else:
-        # Jika format tidak dikenali, anggap itu adalah tanggal lengkap
-        try:
-            waktu = datetime.strptime(tanggal_relatif, "%A, %d %B %Y")  # Ubah dari string tanggal
-        except ValueError:
-            return None  # Jika gagal, kembalikan None untuk di-handle nanti
+daerah_var = tk.StringVar()
+ttk.Label(control_frame, text="Pilih Daerah:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+daerah_combo = ttk.Combobox(control_frame, textvariable=daerah_var, values=list(tribun_daerah.keys()))
+daerah_combo.grid(row=0, column=1, padx=5, pady=5, sticky="we")
 
-    # Kembalikan dalam format YYYY-MM-DD yang sesuai untuk PostgreSQL
-    return waktu.strftime("%Y-%m-%d")
+ttk.Button(control_frame, text="Mulai Scraping", command=start_scraping).grid(row=0, column=2, padx=5, pady=5)
+ttk.Button(control_frame, text="Muat Data", command=load_data_from_db).grid(row=0, column=3, padx=5, pady=5)
+ttk.Button(control_frame, text="Ekspor ke CSV", command=export_to_csv).grid(row=0, column=4, padx=5, pady=5)
+ttk.Button(control_frame, text="Ekspor ke JSON", command=export_to_json).grid(row=0, column=5, padx=5, pady=5)
 
-# Memulai program
-if __name__ == "__main__":
-    main()
+tables_frame = tk.Frame(main_frame, bg="#FFFFFF")
+tables_frame.pack(fill="both", expand=True)
+
+ttk.Label(tables_frame, text="Daftar Berita", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 5), padx=10)
+tree_top = ttk.Treeview(tables_frame, columns=("id", "tema", "judul", "tanggal", "link"), show="headings", height=6)
+tree_top.pack(fill="both", expand=True, pady=5)
+tree_top.heading("id", text="ID")
+tree_top.heading("tema", text="Tema")
+tree_top.heading("judul", text="Judul")
+tree_top.heading("tanggal", text="Tanggal")
+tree_top.heading("link", text="Link")
+tree_top.column("id", width=40)
+tree_top.column("tema", width=150)
+tree_top.column("judul", width=300)
+tree_top.column("tanggal", width=100)
+tree_top.column("link", width=350)
+
+tree_top.bind("<Double-1>", open_link)
+tree_top.bind("<Control-c>", copy_selected)
+tree_top.bind("<Button-3>", lambda event: show_context_menu(event, tree_top))
+
+scroll_top = ttk.Scrollbar(tables_frame, orient="vertical", command=tree_top.yview)
+scroll_top.pack(side="right", fill="y")
+tree_top.configure(yscrollcommand=scroll_top.set)
+
+ttk.Label(tables_frame, text="Isi Berita", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(10, 10), padx=10)
+tree_bottom = ttk.Treeview(tables_frame, columns=("isi_berita",), show="", height=35)
+tree_bottom.pack(fill="both", expand=True, pady=5)
+tree_bottom.column("isi_berita", width=1200)
+
+tree_bottom.bind("<Control-c>", copy_selected)
+tree_bottom.bind("<Button-3>", lambda event: show_context_menu(event, tree_bottom))
+
+scroll_bottom = ttk.Scrollbar(tables_frame, orient="vertical", command=tree_bottom.yview)
+scroll_bottom.pack(side="right", fill="y")
+tree_bottom.configure(yscrollcommand=scroll_bottom.set)
+
+tree_top.bind("<<TreeviewSelect>>", show_article_content)
+
+control_frame.columnconfigure(1, weight=1)
+all_data = []
+
+root.mainloop()
