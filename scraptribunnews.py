@@ -9,7 +9,6 @@ import psycopg2
 from datetime import datetime, timedelta
 import locale
 
-
 # Daftar link Tribun dari berbagai daerah
 tribun_daerah = {
     "Tribun Medan": "https://medan.tribunnews.com",
@@ -45,7 +44,7 @@ locale.setlocale(locale.LC_TIME, 'id_ID.UTF-8')
 # Def pengganti query tanggal dari text ke date
 def parse_date(tanggal_berita):
     try:
-        return datetime.strptime(tanggal_berita, "%d %B %Y").date()  # Format dari The Hacker News
+        return datetime.strptime(tanggal_berita, "%d %B %Y").date()  
     except ValueError:
         return None
 
@@ -54,7 +53,7 @@ def main():
     while True:
         url, daerah_terpilih = pilih_daerah()
         
-        if url is None:  # Jika user memilih exit
+        if url is None:  # Jika user memilih 0 exit
             break
         
         lakukan_scraping(url, daerah_terpilih)
@@ -78,13 +77,13 @@ def buat_tabel_jika_belum_ada(cursor, nama_tabel):
     """
     cursor.execute(query_buat_tabel)
 
-# Modify the duplicate check function
+# Fungsi untuk mengecek apakah sudah ada data yang sama
 def berita_sudah_ada(cursor, nama_tabel, judul, link):
     query_check = f"SELECT EXISTS (SELECT 1 FROM {nama_tabel} WHERE judul = %s OR link = %s);"
     cursor.execute(query_check, (judul, link))
     return cursor.fetchone()[0]
 
-# Modify the database saving function to include article content
+# Fungsi koneksi ke database
 def simpan_ke_database(data, daerah):
     try:
         conn = psycopg2.connect(
@@ -96,6 +95,7 @@ def simpan_ke_database(data, daerah):
         )
         cursor = conn.cursor()
 
+        # Fungsi agar tidak menyimpan data yang sudah ada / terjadinya duplikasi
         nama_tabel = f"berita_tribun_{daerah.replace(' ', '_').lower()}"
         buat_tabel_jika_belum_ada(cursor, nama_tabel)
 
@@ -116,46 +116,47 @@ def simpan_ke_database(data, daerah):
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan ke database: {e}")
 
+# Fungsi untuk ambil isi dari tiap berita
 def ambil_isi_berita(driver, link):
     try:
-        # Store current window handle
+        # Menyimpan handle (ID unik) dari jendela utama browser
         main_window = driver.current_window_handle
         
-        # Open link in new tab
+        # Fungsi membuka tab link dari tiap url berita
         driver.execute_script(f'window.open("{link}", "_blank");')
         
-        # Switch to the new tab
+        # Funtuk berpindah ke tab baru setelah Selenium membuka link dalam tab terpisah.
         driver.switch_to.window(driver.window_handles[-1])
         
-        # Add a small delay to ensure page loads completely
-        time.sleep(2)
+        # Penambahan delay agar laman termuat seutuhnya
+        time.sleep(3)
         
-        # Find the script tag containing keywordBrandSafety
+        # Fungsi untuk menunggu hingga elemen <script> yang mengandung teks "keywordBrandSafety" muncul di halaman web sebelum melanjutkan eksekusi.
         wait = WebDriverWait(driver, 10)
         script_element = wait.until(EC.presence_of_element_located((
             By.XPATH, "//script[contains(text(), 'keywordBrandSafety')]"
         )))
         
-        # Get the script content
+        # Fungsi untuk mengambil teks yang ada di dalam elemen <script> yang sebelumnya ditemukan.
         script_content = script_element.get_attribute('innerHTML')
         
-        # Extract the content from keywordBrandSafety variable
+        # Fungsi untuk mengekstrak teks yang ada di dalam variabel keywordBrandSafety di dalam elemen <script>.
         if 'keywordBrandSafety' in script_content:
-            # Find the content between the quotes after keywordBrandSafety =
+            # Fungsi untuk mencari content diantara quotes setelah keywordBrandSafety
             start_index = script_content.find('keywordBrandSafety = "') + len('keywordBrandSafety = "')
             end_index = script_content.find('";', start_index)
             
             if start_index > -1 and end_index > -1:
                 isi_berita = script_content[start_index:end_index]
                 
-                # Clean up the content
+                # Membersihkan content
                 isi_berita = isi_berita.strip()
-                # Remove extra whitespace
+                # Menghapus tambahan spasi
                 isi_berita = ' '.join(isi_berita.split())
         else:
             isi_berita = "Isi berita tidak ditemukan dalam script"
         
-        # Close the tab and switch back to main window
+        # Menutup tab dan kembali ke halaman utama
         driver.close()
         driver.switch_to.window(main_window)
         
@@ -163,13 +164,12 @@ def ambil_isi_berita(driver, link):
         
     except Exception as e:
         print(f"Error mengambil isi berita: {e}")
-        # Make sure to switch back to main window even if there's an error
         if len(driver.window_handles) > 1:
             driver.close()
         driver.switch_to.window(main_window)
         return "Gagal mengambil isi berita"
     
-# Modify the main scraping function
+# Fungsi untuk scraping
 def lakukan_scraping(url, daerah_terpilih):
     driver = webdriver.Chrome()
     driver.get(url)
@@ -194,10 +194,10 @@ def lakukan_scraping(url, daerah_terpilih):
             link_element = berita.find_element(By.TAG_NAME, "h3").find_element(By.TAG_NAME, "a")
             link_berita = link_element.get_attribute("href") if link_element else "Link tidak ditemukan"
             
-            # Get article content
+            # Mengambil isi berita, diambil dari fungsi diatas
             print(f"Mengambil isi berita: {judul_berita}")
             isi_berita = ambil_isi_berita(driver, link_berita)
-
+            # Memasukan hasil scrap
             daftar_berita.append({
                 "tema": tema_berita,
                 "judul": judul_berita,
@@ -212,10 +212,10 @@ def lakukan_scraping(url, daerah_terpilih):
 
     driver.quit()
 
-    # Save to database
+    # Simpan ke database
     simpan_ke_database(daftar_berita, daerah_terpilih)
 
-    # Save to CSV
+    # Simpan sebagai csv
     nama_file_csv = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.csv"
     try:
         with open(nama_file_csv, mode='w', newline='', encoding='utf-8') as file_csv:
@@ -226,7 +226,7 @@ def lakukan_scraping(url, daerah_terpilih):
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan: {e}")
 
-    # Save to JSON
+    # Simpan ke Json
     nama_file_json = f"result_scrap_{daerah_terpilih.replace(' ', '_').lower()}.json"
     try:
         with open(nama_file_json, mode='w', encoding='utf-8') as file_json:
@@ -235,7 +235,6 @@ def lakukan_scraping(url, daerah_terpilih):
     except Exception as e:
         print(f"Terjadi kesalahan saat menyimpan file JSON: {e}")
 
-# [Previous pilih_daerah, scroll, konversi_waktu, and main functions remain unchanged]
 # Fungsi untuk memilih daerah
 def pilih_daerah():
     print("\nPilih daerah yang ingin di-scrap:")
@@ -279,7 +278,7 @@ def scroll(driver):
             break
         last_height = new_height
 
-
+# Fungsi konversi waktu
 def konversi_waktu(tanggal_relatif):
     sekarang = datetime.now()
 
@@ -301,7 +300,6 @@ def konversi_waktu(tanggal_relatif):
 
     # Kembalikan dalam format YYYY-MM-DD yang sesuai untuk PostgreSQL
     return waktu.strftime("%Y-%m-%d")
-
 
 # Memulai program
 if __name__ == "__main__":
